@@ -1,15 +1,18 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright Authors of K9s
+
 package ui
 
-import "github.com/gdamore/tcell/v2"
+import "github.com/derailed/tcell/v2"
 
 func init() {
 	initKeys()
 }
 
 func initKeys() {
-	tcell.KeyNames[tcell.Key(KeyHelp)] = "?"
-	tcell.KeyNames[tcell.Key(KeySlash)] = "/"
-	tcell.KeyNames[tcell.Key(KeySpace)] = "space"
+	tcell.KeyNames[KeyHelp] = "?"
+	tcell.KeyNames[KeySlash] = "/"
+	tcell.KeyNames[KeySpace] = "space"
 
 	initNumbKeys()
 	initStdKeys()
@@ -73,10 +76,13 @@ const (
 	KeyX
 	KeyY
 	KeyZ
-	KeyHelp  = 63
-	KeySlash = 47
-	KeyColon = 58
-	KeySpace = 32
+	KeyHelp         = 63
+	KeySlash        = 47
+	KeyColon        = 58
+	KeySpace        = 32
+	KeyDash         = 45 //or minus for those searching in the code
+	KeyLeftBracket  = 91
+	KeyRightBracket = 93
 )
 
 // Define Shift Keys.

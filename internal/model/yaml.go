@@ -1,10 +1,12 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright Authors of K9s
+
 package model
 
 import (
 	"context"
 	"fmt"
 	"reflect"
-	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -13,7 +15,6 @@ import (
 	"github.com/derailed/k9s/internal"
 	"github.com/derailed/k9s/internal/client"
 	"github.com/derailed/k9s/internal/dao"
-	"github.com/derailed/k9s/internal/render"
 	"github.com/rs/zerolog/log"
 	"github.com/sahilm/fuzzy"
 )
@@ -38,6 +39,11 @@ func NewYAML(gvr client.GVR, path string) *YAML {
 		gvr:  gvr,
 		path: path,
 	}
+}
+
+// GVR returns the resource gvr.
+func (y *YAML) GVR() client.GVR {
+	return y.gvr
 }
 
 // GetPath returns the active resource path.
@@ -67,29 +73,14 @@ func (y *YAML) filter(q string, lines []string) fuzzy.Matches {
 	if q == "" {
 		return nil
 	}
-	if dao.IsFuzzySelector(q) {
-		return y.fuzzyFilter(strings.TrimSpace(q[2:]), lines)
+	if f, ok := internal.IsFuzzySelector(q); ok {
+		return y.fuzzyFilter(strings.TrimSpace(f), lines)
 	}
-	return y.rxFilter(q, lines)
+	return rxFilter(q, lines)
 }
 
 func (*YAML) fuzzyFilter(q string, lines []string) fuzzy.Matches {
 	return fuzzy.Find(q, lines)
-}
-
-func (*YAML) rxFilter(q string, lines []string) fuzzy.Matches {
-	rx, err := regexp.Compile(`(?i)` + q)
-	if err != nil {
-		return nil
-	}
-	matches := make(fuzzy.Matches, 0, len(lines))
-	for i, l := range lines {
-		if loc := rx.FindStringIndex(l); len(loc) == 2 {
-			matches = append(matches, fuzzy.Match{Str: q, Index: i, MatchedIndexes: loc})
-		}
-	}
-
-	return matches
 }
 
 func (y *YAML) fireResourceChanged(lines []string, matches fuzzy.Matches) {
@@ -215,30 +206,4 @@ func (y *YAML) ToYAML(ctx context.Context, gvr client.GVR, path string, showMana
 	}
 
 	return desc.ToYAML(path, showManaged)
-}
-
-func getMeta(ctx context.Context, gvr client.GVR) (ResourceMeta, error) {
-	meta := resourceMeta(gvr)
-	factory, ok := ctx.Value(internal.KeyFactory).(dao.Factory)
-	if !ok {
-		return ResourceMeta{}, fmt.Errorf("expected Factory in context but got %T", ctx.Value(internal.KeyFactory))
-	}
-	meta.DAO.Init(factory, gvr)
-
-	return meta, nil
-}
-
-func resourceMeta(gvr client.GVR) ResourceMeta {
-	meta, ok := Registry[gvr.String()]
-	if !ok {
-		meta = ResourceMeta{
-			DAO:      &dao.Table{},
-			Renderer: &render.Generic{},
-		}
-	}
-	if meta.DAO == nil {
-		meta.DAO = &dao.Resource{}
-	}
-
-	return meta
 }
