@@ -1,9 +1,13 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright Authors of K9s
+
 package render
 
 import (
 	"fmt"
 
 	"github.com/derailed/k9s/internal/client"
+	"github.com/derailed/k9s/internal/model1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -15,26 +19,44 @@ type Role struct {
 }
 
 // Header returns a header row.
-func (Role) Header(ns string) Header {
-	var h Header
-	if client.IsAllNamespaces(ns) {
-		h = append(h, HeaderColumn{Name: "NAMESPACE"})
-	}
+func (r Role) Header(_ string) model1.Header {
+	return r.doHeader(r.defaultHeader())
+}
 
-	return append(h,
-		HeaderColumn{Name: "NAME"},
-		HeaderColumn{Name: "LABELS", Wide: true},
-		HeaderColumn{Name: "VALID", Wide: true},
-		HeaderColumn{Name: "AGE", Time: true},
-	)
+func (Role) defaultHeader() model1.Header {
+	return model1.Header{
+		model1.HeaderColumn{Name: "NAMESPACE"},
+		model1.HeaderColumn{Name: "NAME"},
+		model1.HeaderColumn{Name: "LABELS", Attrs: model1.Attrs{Wide: true}},
+		model1.HeaderColumn{Name: "VALID", Attrs: model1.Attrs{Wide: true}},
+		model1.HeaderColumn{Name: "AGE", Attrs: model1.Attrs{Time: true}},
+	}
 }
 
 // Render renders a K8s resource to screen.
-func (r Role) Render(o interface{}, ns string, row *Row) error {
+func (r Role) Render(o interface{}, _ string, row *model1.Row) error {
 	raw, ok := o.(*unstructured.Unstructured)
 	if !ok {
-		return fmt.Errorf("Expected Role, but got %T", o)
+		return fmt.Errorf("expected Role, but got %T", o)
 	}
+
+	if err := r.defaultRow(raw, row); err != nil {
+		return err
+	}
+	if r.specs.isEmpty() {
+		return nil
+	}
+
+	cols, err := r.specs.realize(raw, r.defaultHeader(), row)
+	if err != nil {
+		return err
+	}
+	cols.hydrateRow(row)
+
+	return nil
+}
+
+func (r Role) defaultRow(raw *unstructured.Unstructured, row *model1.Row) error {
 	var ro rbacv1.Role
 	err := runtime.DefaultUnstructuredConverter.FromUnstructured(raw.Object, &ro)
 	if err != nil {
@@ -42,16 +64,13 @@ func (r Role) Render(o interface{}, ns string, row *Row) error {
 	}
 
 	row.ID = client.MetaFQN(ro.ObjectMeta)
-	row.Fields = make(Fields, 0, len(r.Header(ns)))
-	if client.IsAllNamespaces(ns) {
-		row.Fields = append(row.Fields, ro.Namespace)
-	}
-	row.Fields = append(row.Fields,
+	row.Fields = model1.Fields{
+		ro.Namespace,
 		ro.Name,
 		mapToStr(ro.Labels),
 		"",
-		toAge(ro.GetCreationTimestamp()),
-	)
+		ToAge(ro.GetCreationTimestamp()),
+	}
 
 	return nil
 }

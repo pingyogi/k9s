@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright Authors of K9s
+
 package render
 
 import (
@@ -8,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/derailed/k9s/internal/client"
+	"github.com/derailed/k9s/internal/model1"
 	"github.com/derailed/tview"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -18,7 +22,7 @@ import (
 
 const (
 	labelNodeRolePrefix = "node-role.kubernetes.io/"
-	nodeLabelRole       = "kubernetes.io/role"
+	labelNodeRoleSuffix = "kubernetes.io/role"
 )
 
 // Node renders a K8s Node to screen.
@@ -27,41 +31,61 @@ type Node struct {
 }
 
 // Header returns a header row.
-func (Node) Header(_ string) Header {
-	return Header{
-		HeaderColumn{Name: "NAME"},
-		HeaderColumn{Name: "STATUS"},
-		HeaderColumn{Name: "ROLE"},
-		HeaderColumn{Name: "VERSION"},
-		HeaderColumn{Name: "KERNEL", Wide: true},
-		HeaderColumn{Name: "INTERNAL-IP", Wide: true},
-		HeaderColumn{Name: "EXTERNAL-IP", Wide: true},
-		HeaderColumn{Name: "PODS", Align: tview.AlignRight},
-		HeaderColumn{Name: "CPU", Align: tview.AlignRight, MX: true},
-		HeaderColumn{Name: "MEM", Align: tview.AlignRight, MX: true},
-		HeaderColumn{Name: "%CPU", Align: tview.AlignRight, MX: true},
-		HeaderColumn{Name: "%MEM", Align: tview.AlignRight, MX: true},
-		HeaderColumn{Name: "CPU/A", Align: tview.AlignRight, MX: true},
-		HeaderColumn{Name: "MEM/A", Align: tview.AlignRight, MX: true},
-		HeaderColumn{Name: "LABELS", Wide: true},
-		HeaderColumn{Name: "VALID", Wide: true},
-		HeaderColumn{Name: "AGE", Time: true},
+func (n Node) Header(_ string) model1.Header {
+	return n.doHeader(n.defaultHeader())
+}
+
+func (Node) defaultHeader() model1.Header {
+	return model1.Header{
+		model1.HeaderColumn{Name: "NAME"},
+		model1.HeaderColumn{Name: "STATUS"},
+		model1.HeaderColumn{Name: "ROLE"},
+		model1.HeaderColumn{Name: "ARCH", Attrs: model1.Attrs{Wide: true}},
+		model1.HeaderColumn{Name: "TAINTS"},
+		model1.HeaderColumn{Name: "VERSION"},
+		model1.HeaderColumn{Name: "OS-IMAGE", Attrs: model1.Attrs{Wide: true}},
+		model1.HeaderColumn{Name: "KERNEL", Attrs: model1.Attrs{Wide: true}},
+		model1.HeaderColumn{Name: "INTERNAL-IP", Attrs: model1.Attrs{Wide: true}},
+		model1.HeaderColumn{Name: "EXTERNAL-IP", Attrs: model1.Attrs{Wide: true}},
+		model1.HeaderColumn{Name: "PODS", Attrs: model1.Attrs{Align: tview.AlignRight}},
+		model1.HeaderColumn{Name: "CPU", Attrs: model1.Attrs{Align: tview.AlignRight, MX: true}},
+		model1.HeaderColumn{Name: "MEM", Attrs: model1.Attrs{Align: tview.AlignRight, MX: true}},
+		model1.HeaderColumn{Name: "%CPU", Attrs: model1.Attrs{Align: tview.AlignRight, MX: true}},
+		model1.HeaderColumn{Name: "%MEM", Attrs: model1.Attrs{Align: tview.AlignRight, MX: true}},
+		model1.HeaderColumn{Name: "CPU/A", Attrs: model1.Attrs{Align: tview.AlignRight, MX: true}},
+		model1.HeaderColumn{Name: "MEM/A", Attrs: model1.Attrs{Align: tview.AlignRight, MX: true}},
+		model1.HeaderColumn{Name: "LABELS", Attrs: model1.Attrs{Wide: true}},
+		model1.HeaderColumn{Name: "VALID", Attrs: model1.Attrs{Wide: true}},
+		model1.HeaderColumn{Name: "AGE", Attrs: model1.Attrs{Time: true}},
 	}
 }
 
 // Render renders a K8s resource to screen.
-func (n Node) Render(o interface{}, ns string, r *Row) error {
-	oo, ok := o.(*NodeWithMetrics)
+func (n Node) Render(o interface{}, ns string, row *model1.Row) error {
+	nwm, ok := o.(*NodeWithMetrics)
 	if !ok {
-		return fmt.Errorf("Expected *NodeAndMetrics, but got %T", o)
+		return fmt.Errorf("expected PodWithMetrics, but got %T", o)
 	}
-	meta, ok := oo.Raw.Object["metadata"].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("Unable to extract meta")
+	if err := n.defaultRow(nwm, row); err != nil {
+		return err
 	}
-	na := extractMetaField(meta, "name")
+	if n.specs.isEmpty() {
+		return nil
+	}
+
+	cols, err := n.specs.realize(nwm.Raw, n.defaultHeader(), row)
+	if err != nil {
+		return err
+	}
+	cols.hydrateRow(row)
+
+	return nil
+}
+
+// Render renders a K8s resource to screen.
+func (n Node) defaultRow(nwm *NodeWithMetrics, r *model1.Row) error {
 	var no v1.Node
-	err := runtime.DefaultUnstructuredConverter.FromUnstructured(oo.Raw.Object, &no)
+	err := runtime.DefaultUnstructuredConverter.FromUnstructured(nwm.Raw.Object, &no)
 	if err != nil {
 		return err
 	}
@@ -69,7 +93,7 @@ func (n Node) Render(o interface{}, ns string, r *Row) error {
 	iIP, eIP := getIPs(no.Status.Addresses)
 	iIP, eIP = missing(iIP), missing(eIP)
 
-	c, a := gatherNodeMX(&no, oo.MX)
+	c, a := gatherNodeMX(&no, nwm.MX)
 	statuses := make(sort.StringSlice, 10)
 	status(no.Status.Conditions, no.Spec.Unschedulable, statuses)
 	sort.Sort(statuses)
@@ -77,16 +101,23 @@ func (n Node) Render(o interface{}, ns string, r *Row) error {
 	nodeRoles(&no, roles)
 	sort.Sort(roles)
 
-	r.ID = client.FQN("", na)
-	r.Fields = Fields{
+	podCount := strconv.Itoa(nwm.PodCount)
+	if pc := nwm.PodCount; pc == -1 {
+		podCount = NAValue
+	}
+	r.ID = client.FQN("", no.Name)
+	r.Fields = model1.Fields{
 		no.Name,
 		join(statuses, ","),
 		join(roles, ","),
+		no.Status.NodeInfo.Architecture,
+		strconv.Itoa(len(no.Spec.Taints)),
 		no.Status.NodeInfo.KubeletVersion,
+		no.Status.NodeInfo.OSImage,
 		no.Status.NodeInfo.KernelVersion,
 		iIP,
 		eIP,
-		strconv.Itoa(oo.PodCount),
+		podCount,
 		toMc(c.cpu),
 		toMi(c.mem),
 		client.ToPercentageStr(c.cpu, a.cpu),
@@ -94,8 +125,8 @@ func (n Node) Render(o interface{}, ns string, r *Row) error {
 		toMc(a.cpu),
 		toMi(a.mem),
 		mapToStr(no.Labels),
-		asStatus(n.diagnose(statuses)),
-		toAge(no.GetCreationTimestamp()),
+		AsStatus(n.diagnose(statuses)),
+		ToAge(no.GetCreationTimestamp()),
 	}
 
 	return nil
@@ -169,7 +200,7 @@ func nodeRoles(node *v1.Node, res []string) {
 				res[index] = role
 				index++
 			}
-		case k == nodeLabelRole && v != "":
+		case strings.HasSuffix(k, labelNodeRoleSuffix) && v != "":
 			res[index] = v
 			index++
 		}

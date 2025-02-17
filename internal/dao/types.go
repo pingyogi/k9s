@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright Authors of K9s
+
 package dao
 
 import (
@@ -5,14 +8,15 @@ import (
 	"io"
 	"time"
 
-	"github.com/derailed/k9s/internal/client"
-	"github.com/derailed/k9s/internal/watch"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
 	restclient "k8s.io/client-go/rest"
+
+	"github.com/derailed/k9s/internal/client"
+	"github.com/derailed/k9s/internal/watch"
 )
 
 // ResourceMetas represents a collection of resource metadata.
@@ -44,8 +48,14 @@ type Factory interface {
 	// DeleteForwarder deletes a pod forwarder.
 	DeleteForwarder(path string)
 
-	// Forwards returns all portforwards.
+	// Forwarders returns all portforwards.
 	Forwarders() watch.Forwarders
+}
+
+// ImageLister tracks resources with container images.
+type ImageLister interface {
+	// ListImages lists container images.
+	ListImages(ctx context.Context, path string) ([]string, error)
 }
 
 // Getter represents a resource getter.
@@ -70,6 +80,9 @@ type Accessor interface {
 
 	// GVR returns a gvr a string.
 	GVR() string
+
+	// SetIncludeObject toggles object inclusion.
+	SetIncludeObject(bool)
 }
 
 // DrainOptions tracks drain attributes.
@@ -79,6 +92,7 @@ type DrainOptions struct {
 	IgnoreAllDaemonSets bool
 	DeleteEmptyDirData  bool
 	Force               bool
+	DisableEviction     bool
 }
 
 // NodeMaintainer performs node maintenance operations.
@@ -92,7 +106,7 @@ type NodeMaintainer interface {
 
 // Loggable represents resources with logs.
 type Loggable interface {
-	// TaiLogs streams resource logs.
+	// TailLogs streams resource logs.
 	TailLogs(ctx context.Context, opts *LogOptions) ([]LogChan, error)
 }
 
@@ -111,6 +125,12 @@ type Scalable interface {
 	Scale(ctx context.Context, path string, replicas int32) error
 }
 
+// ReplicasGetter represents a resource with replicas.
+type ReplicasGetter interface {
+	// Replicas returns the number of replicas for the resource located at the given path.
+	Replicas(ctx context.Context, path string) (int32, error)
+}
+
 // Controller represents a pod controller.
 type Controller interface {
 	// Pod returns a pod instance matching the selector.
@@ -120,7 +140,7 @@ type Controller interface {
 // Nuker represents a resource deleter.
 type Nuker interface {
 	// Delete removes a resource from the api server.
-	Delete(ctx context.Context, path string, propagation *metav1.DeletionPropagation, force bool) error
+	Delete(context.Context, string, *metav1.DeletionPropagation, Grace) error
 }
 
 // Switchable represents a switchable resource.
@@ -149,9 +169,21 @@ type Logger interface {
 
 // ContainsPodSpec represents a resource with a pod template.
 type ContainsPodSpec interface {
-	// Get PodSpec of a resource
+	// GetPodSpec returns a podspec for the resource.
 	GetPodSpec(path string) (*v1.PodSpec, error)
 
-	// Set Images for a resource
+	// SetImages sets container image.
 	SetImages(ctx context.Context, path string, imageSpecs ImageSpecs) error
+}
+
+// Sanitizer represents a resource sanitizer.
+type Sanitizer interface {
+	// Sanitize nukes all resources in unhappy state.
+	Sanitize(context.Context, string) (int, error)
+}
+
+// Valuer represents a resource with values.
+type Valuer interface {
+	// GetValues returns values for a resource.
+	GetValues(path string, allValues bool) ([]byte, error)
 }

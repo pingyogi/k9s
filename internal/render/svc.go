@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright Authors of K9s
+
 package render
 
 import (
@@ -7,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/derailed/k9s/internal/client"
+	"github.com/derailed/k9s/internal/model1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -18,27 +22,50 @@ type Service struct {
 }
 
 // Header returns a header row.
-func (Service) Header(ns string) Header {
-	return Header{
-		HeaderColumn{Name: "NAMESPACE"},
-		HeaderColumn{Name: "NAME"},
-		HeaderColumn{Name: "TYPE"},
-		HeaderColumn{Name: "CLUSTER-IP"},
-		HeaderColumn{Name: "EXTERNAL-IP"},
-		HeaderColumn{Name: "SELECTOR", Wide: true},
-		HeaderColumn{Name: "PORTS", Wide: false},
-		HeaderColumn{Name: "LABELS", Wide: true},
-		HeaderColumn{Name: "VALID", Wide: true},
-		HeaderColumn{Name: "AGE", Time: true},
+func (s Service) Header(_ string) model1.Header {
+	return s.doHeader(s.defaultHeader())
+}
+
+// Header returns a header row.
+func (Service) defaultHeader() model1.Header {
+	return model1.Header{
+		model1.HeaderColumn{Name: "NAMESPACE"},
+		model1.HeaderColumn{Name: "NAME"},
+		model1.HeaderColumn{Name: "TYPE"},
+		model1.HeaderColumn{Name: "CLUSTER-IP"},
+		model1.HeaderColumn{Name: "EXTERNAL-IP"},
+		model1.HeaderColumn{Name: "SELECTOR", Attrs: model1.Attrs{Wide: true}},
+		model1.HeaderColumn{Name: "PORTS", Attrs: model1.Attrs{Wide: false}},
+		model1.HeaderColumn{Name: "LABELS", Attrs: model1.Attrs{Wide: true}},
+		model1.HeaderColumn{Name: "VALID", Attrs: model1.Attrs{Wide: true}},
+		model1.HeaderColumn{Name: "AGE", Attrs: model1.Attrs{Time: true}},
 	}
 }
 
 // Render renders a K8s resource to screen.
-func (s Service) Render(o interface{}, ns string, r *Row) error {
+func (s Service) Render(o interface{}, ns string, row *model1.Row) error {
 	raw, ok := o.(*unstructured.Unstructured)
 	if !ok {
-		return fmt.Errorf("Expected Service, but got %T", o)
+		return fmt.Errorf("expected Service, but got %T", o)
 	}
+
+	if err := s.defaultRow(raw, row); err != nil {
+		return err
+	}
+	if s.specs.isEmpty() {
+		return nil
+	}
+
+	cols, err := s.specs.realize(raw, s.defaultHeader(), row)
+	if err != nil {
+		return err
+	}
+	cols.hydrateRow(row)
+
+	return nil
+}
+
+func (s Service) defaultRow(raw *unstructured.Unstructured, r *model1.Row) error {
 	var svc v1.Service
 	err := runtime.DefaultUnstructuredConverter.FromUnstructured(raw.Object, &svc)
 	if err != nil {
@@ -46,7 +73,7 @@ func (s Service) Render(o interface{}, ns string, r *Row) error {
 	}
 
 	r.ID = client.MetaFQN(svc.ObjectMeta)
-	r.Fields = Fields{
+	r.Fields = model1.Fields{
 		svc.Namespace,
 		svc.ObjectMeta.Name,
 		string(svc.Spec.Type),
@@ -55,8 +82,8 @@ func (s Service) Render(o interface{}, ns string, r *Row) error {
 		mapToStr(svc.Spec.Selector),
 		ToPorts(svc.Spec.Ports),
 		mapToStr(svc.Labels),
-		asStatus(s.diagnose()),
-		toAge(svc.GetCreationTimestamp()),
+		AsStatus(s.diagnose()),
+		ToAge(svc.GetCreationTimestamp()),
 	}
 
 	return nil

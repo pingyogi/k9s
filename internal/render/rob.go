@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright Authors of K9s
+
 package render
 
 import (
@@ -5,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/derailed/k9s/internal/client"
+	"github.com/derailed/k9s/internal/model1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -15,30 +19,48 @@ type RoleBinding struct {
 	Base
 }
 
-// Header returns a header rbw.
-func (RoleBinding) Header(ns string) Header {
-	var h Header
-	if client.IsAllNamespaces(ns) {
-		h = append(h, HeaderColumn{Name: "NAMESPACE"})
-	}
+// Header returns a header row.
+func (r RoleBinding) Header(_ string) model1.Header {
+	return r.doHeader(r.defaultHeader())
+}
 
-	return append(h,
-		HeaderColumn{Name: "NAME"},
-		HeaderColumn{Name: "ROLE"},
-		HeaderColumn{Name: "KIND"},
-		HeaderColumn{Name: "SUBJECTS"},
-		HeaderColumn{Name: "LABELS", Wide: true},
-		HeaderColumn{Name: "VALID", Wide: true},
-		HeaderColumn{Name: "AGE", Time: true},
-	)
+func (RoleBinding) defaultHeader() model1.Header {
+	return model1.Header{
+		model1.HeaderColumn{Name: "NAMESPACE"},
+		model1.HeaderColumn{Name: "NAME"},
+		model1.HeaderColumn{Name: "ROLE"},
+		model1.HeaderColumn{Name: "KIND"},
+		model1.HeaderColumn{Name: "SUBJECTS"},
+		model1.HeaderColumn{Name: "LABELS", Attrs: model1.Attrs{Wide: true}},
+		model1.HeaderColumn{Name: "VALID", Attrs: model1.Attrs{Wide: true}},
+		model1.HeaderColumn{Name: "AGE", Attrs: model1.Attrs{Time: true}},
+	}
 }
 
 // Render renders a K8s resource to screen.
-func (r RoleBinding) Render(o interface{}, ns string, row *Row) error {
+func (r RoleBinding) Render(o interface{}, ns string, row *model1.Row) error {
 	raw, ok := o.(*unstructured.Unstructured)
 	if !ok {
-		return fmt.Errorf("Expected RoleBinding, but got %T", o)
+		return fmt.Errorf("expected RoleBinding, but got %T", o)
 	}
+
+	if err := r.defaultRow(raw, row); err != nil {
+		return err
+	}
+	if r.specs.isEmpty() {
+		return nil
+	}
+
+	cols, err := r.specs.realize(raw, r.defaultHeader(), row)
+	if err != nil {
+		return err
+	}
+	cols.hydrateRow(row)
+
+	return nil
+}
+
+func (r RoleBinding) defaultRow(raw *unstructured.Unstructured, row *model1.Row) error {
 	var rb rbacv1.RoleBinding
 	err := runtime.DefaultUnstructuredConverter.FromUnstructured(raw.Object, &rb)
 	if err != nil {
@@ -48,19 +70,16 @@ func (r RoleBinding) Render(o interface{}, ns string, row *Row) error {
 	kind, ss := renderSubjects(rb.Subjects)
 
 	row.ID = client.MetaFQN(rb.ObjectMeta)
-	row.Fields = make(Fields, 0, len(r.Header(ns)))
-	if client.IsAllNamespaces(ns) {
-		row.Fields = append(row.Fields, rb.Namespace)
-	}
-	row.Fields = append(row.Fields,
+	row.Fields = model1.Fields{
+		rb.Namespace,
 		rb.Name,
 		rb.RoleRef.Name,
 		kind,
 		ss,
 		mapToStr(rb.Labels),
 		"",
-		toAge(rb.GetCreationTimestamp()),
-	)
+		ToAge(rb.GetCreationTimestamp()),
+	}
 
 	return nil
 }
